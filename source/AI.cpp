@@ -2099,7 +2099,7 @@ void AI::Attack(Ship &ship, Command &command, const Ship &target)
 	// If this ship has only long-range weapons, or some weapons have a
 	// blast radius, it should keep some distance instead of closing in.
 	Point d = (target.Position() + target.Velocity()) - (ship.Position() + ship.Velocity());
-	if((minSafeDistance > 0. || shortestRange > 1000.)
+	if((minSafeDistance > 0. || shortestRange > 800.)
 			&& d.Length() < max(1.25 * minSafeDistance, .5 * shortestRange))
 	{
 		// If this ship can use reverse thrusters, consider doing so.
