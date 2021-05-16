@@ -2078,8 +2078,7 @@ void AI::Attack(Ship &ship, Command &command, const Ship &target)
 			
 			// The missile boat AI should be applied at 1000 pixels range if
 			// all weapons are homing or turrets, and at 2000 if not.
-			double multiplier = (hardpoint.IsHoming() || hardpoint.IsTurret()) ? 1. : .5;
-			shortestRange = min(multiplier * weapon->Range(), shortestRange);
+			shortestRange = min( weapon->Range(), shortestRange);
 		}
 	}
 	// If this ship was using the missile boat AI to run away and bombard its
@@ -2099,8 +2098,8 @@ void AI::Attack(Ship &ship, Command &command, const Ship &target)
 	// If this ship has only long-range weapons, or some weapons have a
 	// blast radius, it should keep some distance instead of closing in.
 	Point d = (target.Position() + target.Velocity()) - (ship.Position() + ship.Velocity());
-	if((minSafeDistance > 0. || shortestRange > 1000.)
-			&& d.Length() < max(1.25 * minSafeDistance, .5 * shortestRange))
+	if((minSafeDistance > 0. || shortestRange > 801.)
+			&& d.Length() < max(1.25 * minSafeDistance, .8 * shortestRange))
 	{
 		// If this ship can use reverse thrusters, consider doing so.
 		double reverseSpeed = ship.MaxReverseVelocity();
@@ -3486,7 +3485,7 @@ void AI::MovePlayer(Ship &ship, const PlayerInfo &player, Command &activeCommand
 			int index = 0;
 			for(const Hardpoint &hardpoint : ship.Weapons())
 			{
-				if(hardpoint.IsReady() && !hardpoint.GetOutfit()->Icon() && !hardpoint.IsTurret())
+				if(hardpoint.IsReady() && !hardpoint.GetOutfit()->Icon()&& !hardpoint.IsTurret())
 					command.SetFire(index);
 				++index;
 			}
