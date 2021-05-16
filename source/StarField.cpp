@@ -27,10 +27,12 @@ PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 #include <cmath>
 #include <numeric>
 
+#define STARLAYERS 2
+
 using namespace std;
 
 namespace {
-	const int TILE_SIZE = 256;
+	const int TILE_SIZE = 128;
 	// The star field tiles in 4000 pixel increments. Have the tiling of the haze
 	// field be as different from that as possible. (Note: this may need adjusting
 	// in the future if monitors larger than this width ever become commonplace.)
@@ -90,17 +92,20 @@ void StarField::SetHaze(const Sprite *sprite)
 
 void StarField::Draw(const Point &pos, const Point &vel, double zoom) const
 {
+	double savedZoom = zoom;
 	// Draw the starfield unless it is disabled in the preferences.
 	if(Preferences::Has("Draw starfield"))
 	{
 		glUseProgram(shader.Object());
 		glBindVertexArray(vao);
+		
+		zoom = savedZoom * .5;
 	
 		float length = vel.Length();
 		Point unit = length ? vel.Unit() : Point(1., 0.);
 		// Don't zoom the stars at the same rate as the field; otherwise, at the
 		// farthest out zoom they are too small to draw well.
-		unit /= pow(zoom, .75);
+		unit /= pow(zoom, .6);
 	
 		float baseZoom = static_cast<float>(2. * zoom);
 		GLfloat scale[2] = {baseZoom / Screen::Width(), -baseZoom / Screen::Height()};
@@ -118,30 +123,34 @@ void StarField::Draw(const Point &pos, const Point &vel, double zoom) const
 		double borderX = fabs(vel.X()) + 1.;
 		double borderY = fabs(vel.Y()) + 1.;
 		// Find the absolute bounds of the star field we must draw.
-		int minX = pos.X() + (Screen::Left() - borderX) / zoom;
-		int minY = pos.Y() + (Screen::Top() - borderY) / zoom;
-		int maxX = pos.X() + (Screen::Right() + borderX) / zoom;
-		int maxY = pos.Y() + (Screen::Bottom() + borderY) / zoom;
-		// Round down to the start of the nearest tile.
-		minX &= ~(TILE_SIZE - 1l);
-		minY &= ~(TILE_SIZE - 1l);
-	
-		for(int gy = minY; gy < maxY; gy += TILE_SIZE)
-			for(int gx = minX; gx < maxX; gx += TILE_SIZE)
-			{
-				Point off = Point(gx, gy) - pos;
-				GLfloat translate[2] = {
-					static_cast<float>(off.X()),
-					static_cast<float>(off.Y())
-				};
-				glUniform2fv(translateI, 1, translate);
-				
-				int index = (gx & widthMod) / TILE_SIZE + ((gy & widthMod) / TILE_SIZE) * tileCols;
-				int first = 6 * tileIndex[index];
-				int count = 6 * tileIndex[index + 1] - first;
-				glDrawArrays(GL_TRIANGLES, first, count);
-			}
-	
+		float posOffset = 0.5;
+		for(int asdf = 0; asdf < STARLAYERS; asdf++) {
+			posOffset -= 0.1;
+			double of = 1200.*asdf;
+			int minX = of+pos.X()*posOffset + (Screen::Left() - borderX) / zoom;
+			int minY = of+pos.Y()*posOffset + (Screen::Top() - borderY) / zoom;
+			int maxX = of+pos.X()*posOffset + (Screen::Right() + borderX) / zoom;
+			int maxY = of+pos.Y()*posOffset + (Screen::Bottom() + borderY) / zoom;
+			// Round down to the start of the nearest tile.
+			minX &= ~(TILE_SIZE - 1l);
+			minY &= ~(TILE_SIZE - 1l);
+		
+			for(int gy = minY; gy < maxY; gy += TILE_SIZE)
+				for(int gx = minX; gx < maxX; gx += TILE_SIZE)
+				{
+					Point off = Point(gx, gy) - (Point(of,of)+pos*posOffset);
+					GLfloat translate[2] = {
+						static_cast<float>(off.X()),
+						static_cast<float>(off.Y())
+					};
+					glUniform2fv(translateI, 1, translate);
+					
+					int index = (gx & widthMod) / TILE_SIZE + ((gy & widthMod) / TILE_SIZE) * tileCols;
+					int first = 6 * tileIndex[index];
+					int count = 6 * tileIndex[index + 1] - first;
+					glDrawArrays(GL_TRIANGLES, first, count);
+				}
+		}
 		glBindVertexArray(0);
 		glUseProgram(0);
 	}
@@ -150,10 +159,11 @@ void StarField::Draw(const Point &pos, const Point &vel, double zoom) const
 	if(!Preferences::Has("Draw background haze"))
 		return;
 	
+	zoom = savedZoom * 0.8;
 	DrawList drawList;
 	drawList.Clear(0, zoom);
 	drawList.SetCenter(pos);
-	
+		
 	// Any object within this range must be drawn. Some haze sprites may repeat
 	// more than once if the view covers a very large area.
 	Point size = Point(1., 1.) * haze.front().Radius();
@@ -167,11 +177,11 @@ void StarField::Draw(const Point &pos, const Point &vel, double zoom) const
 		startX += topLeft.X() + HAZE_WRAP * (startX < 0.);
 		double startY = fmod(it.Position().Y() - topLeft.Y(), HAZE_WRAP);
 		startY += topLeft.Y() + HAZE_WRAP * (startY < 0.);
-	
+		
 		// Draw any instances of this haze that are on screen.
 		for(double y = startY; y < bottomRight.Y(); y += HAZE_WRAP)
-			for(double x = startX; x < bottomRight.X(); x += HAZE_WRAP)
-				drawList.Add(it, Point(x, y));
+		for(double x = startX; x < bottomRight.X(); x += HAZE_WRAP)
+		drawList.Add(it, Point(x, y));
 	}
 	drawList.Draw();
 }
@@ -303,9 +313,9 @@ void StarField::MakeStars(int stars, int width)
 		
 		// Randomize its sub-pixel position and its size / brightness.
 		int random = Random::Int(4096);
-		float fx = (x & (TILE_SIZE - 1)) + (random & 15) * 0.0625f;
-		float fy = (y & (TILE_SIZE - 1)) + (random >> 8) * 0.0625f;
-		float size = (((random >> 4) & 15) + 20) * 0.0625f;
+		float fx = (x & (TILE_SIZE - 1)) + (random & 15) * 0.125f;
+		float fy = (y & (TILE_SIZE - 1)) + (random >> 8) * 0.125f;
+		float size = (((random >> 4) & 15) + 20) * 0.125f;
 		
 		// Fill in the data array.
 		auto dataIt = data.begin() + 6 * 4 * tileIndex[index]++;
