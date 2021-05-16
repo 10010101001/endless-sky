@@ -371,7 +371,7 @@ void GameData::LoadShaders(bool useShaderSwizzle)
 	SpriteShader::Init(useShaderSwizzle);
 	BatchShader::Init();
 	
-	background.Init(16384, 4096);
+	background.Init(8192, 8192);
 }
 
 
