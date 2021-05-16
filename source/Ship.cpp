@@ -2127,7 +2127,7 @@ void Ship::Launch(list<shared_ptr<Ship>> &ships, vector<Visual> &visuals)
 					if(bay.ship->fuel < .25 * maxFuel)
 					{
 						TransferFuel(bay.ship->fuel, this);
-						continue;
+						//continue;
 					}
 				}
 			}
