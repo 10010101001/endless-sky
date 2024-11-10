@@ -7,17 +7,23 @@ Foundation, either version 3 of the License, or (at your option) any later versi
 
 Endless Sky is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "Body.h"
 
 #include "DataNode.h"
 #include "DataWriter.h"
+#include "GameData.h"
+#include "image/Mask.h"
+#include "image/MaskManager.h"
+#include "pi.h"
 #include "Random.h"
-#include "Screen.h"
-#include "Sprite.h"
-#include "SpriteSet.h"
+#include "image/Sprite.h"
+#include "image/SpriteSet.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,18 +68,18 @@ const Sprite *Body::GetSprite() const
 
 
 
-// Get the width of this object, in world coordinates (i.e. taking zoom into account).
+// Get the width of this object, in world coordinates (i.e. taking zoom and scale into account).
 double Body::Width() const
 {
-	return static_cast<double>(sprite ? (.5f * zoom) * sprite->Width() : 0.f);
+	return static_cast<double>(sprite ? (.5f * zoom) * scale * sprite->Width() : 0.f);
 }
 
 
 
-// Get the height of this object, in world coordinates (i.e. taking zoom into account).
+// Get the height of this object, in world coordinates (i.e. taking zoom and scale into account).
 double Body::Height() const
 {
-	return static_cast<double>(sprite ? (.5f * zoom) * sprite->Height() : 0.f);
+	return static_cast<double>(sprite ? (.5f * zoom) * scale * sprite->Height() : 0.f);
 }
 
 
@@ -100,7 +106,7 @@ float Body::GetFrame(int step) const
 {
 	if(step >= 0)
 		SetStep(step);
-	
+
 	return frame;
 }
 
@@ -112,9 +118,16 @@ const Mask &Body::GetMask(int step) const
 {
 	if(step >= 0)
 		SetStep(step);
-	
+
 	static const Mask EMPTY;
-	return sprite ? sprite->GetMask(round(frame)) : EMPTY;
+	int current = round(frame);
+	if(!sprite || current < 0)
+		return EMPTY;
+
+	const vector<Mask> &masks = GameData::GetMaskManager().GetMasks(sprite, Scale());
+
+	// Assume that if a masks array exists, it has the right number of frames.
+	return masks.empty() ? EMPTY : masks[current % masks.size()];
 }
 
 
@@ -131,6 +144,13 @@ const Point &Body::Position() const
 const Point &Body::Velocity() const
 {
 	return velocity;
+}
+
+
+
+const Point Body::Center() const
+{
+	return -rotatedCenter + position;
 }
 
 
@@ -160,6 +180,13 @@ double Body::Zoom() const
 
 
 
+double Body::Scale() const
+{
+	return static_cast<double>(scale);
+}
+
+
+
 // Check if this object is marked for removal from the game.
 bool Body::ShouldBeRemoved() const
 {
@@ -183,7 +210,7 @@ void Body::LoadSprite(const DataNode &node)
 	if(node.Size() < 2)
 		return;
 	sprite = SpriteSet::Get(node.Token(1));
-	
+
 	// The only time the animation does not start on a specific frame is if no
 	// start frame is specified and it repeats. Since a frame that does not
 	// start at zero starts when the game started, it does not make sense for it
@@ -196,6 +223,8 @@ void Body::LoadSprite(const DataNode &node)
 			frameRate = 1. / child.Value(1);
 		else if(child.Token(0) == "delay" && child.Size() >= 2 && child.Value(1) > 0.)
 			delay = child.Value(1);
+		else if(child.Token(0) == "scale" && child.Size() >= 2 && child.Value(1) > 0.)
+			scale = static_cast<float>(child.Value(1));
 		else if(child.Token(0) == "start frame" && child.Size() >= 2)
 		{
 			frameOffset += static_cast<float>(child.Value(1));
@@ -210,9 +239,14 @@ void Body::LoadSprite(const DataNode &node)
 		}
 		else if(child.Token(0) == "rewind")
 			rewind = true;
+		else if(child.Token(0) == "center" && child.Size() >= 3)
+			center = Point(child.Value(1), child.Value(2));
 		else
 			child.PrintTrace("Skipping unrecognized attribute:");
 	}
+
+	if(scale != 1.f)
+		GameData::GetMaskManager().RegisterScale(sprite, Scale());
 }
 
 
@@ -222,7 +256,7 @@ void Body::SaveSprite(DataWriter &out, const string &tag) const
 {
 	if(!sprite)
 		return;
-	
+
 	out.Write(tag, sprite->Name());
 	out.BeginChild();
 	{
@@ -230,12 +264,16 @@ void Body::SaveSprite(DataWriter &out, const string &tag) const
 			out.Write("frame rate", frameRate * 60.);
 		if(delay)
 			out.Write("delay", delay);
+		if(scale != 1.f)
+			out.Write("scale", scale);
 		if(randomize)
 			out.Write("random start frame");
 		if(!repeat)
 			out.Write("no repeat");
 		if(rewind)
 			out.Write("rewind");
+		if(center)
+			out.Write("center", center.X(), center.Y());
 	}
 	out.EndChild();
 }
@@ -255,6 +293,13 @@ void Body::SetSprite(const Sprite *sprite)
 void Body::SetSwizzle(int swizzle)
 {
 	this->swizzle = swizzle;
+}
+
+
+
+double Body::Alpha() const
+{
+	return alpha;
 }
 
 
@@ -299,20 +344,53 @@ void Body::UnmarkForRemoval()
 
 
 
+// Turn this object around its center of rotation.
+void Body::Turn(double amount)
+{
+	angle += amount;
+	if(!center)
+		return;
+
+	auto RotatePointAroundOrigin = [](Point &toRotate, double radians) -> Point {
+		float si = sin(radians);
+		float co = cos(radians);
+		float newX = toRotate.X() * co - toRotate.Y() * si;
+		float newY = toRotate.X() * si + toRotate.Y() * co;
+		return Point(newX, newY);
+	};
+
+	rotatedCenter = -RotatePointAroundOrigin(center, (angle - amount).Degrees() * TO_RAD);
+
+	position -= rotatedCenter;
+
+	rotatedCenter = RotatePointAroundOrigin(rotatedCenter, Angle(amount).Degrees() * TO_RAD);
+
+	position += rotatedCenter;
+}
+
+
+
+void Body::Turn(const Angle &amount)
+{
+	Turn(amount.Degrees());
+}
+
+
+
 // Set the current time step.
 void Body::SetStep(int step) const
 {
 	// If the animation is paused, reduce the step by however many frames it has
 	// been paused for.
 	step -= pause;
-	
+
 	// If the step is negative or there is no sprite, do nothing. This updates
 	// and caches the mask and the frame so that if further queries are made at
 	// this same time step, we don't need to redo the calculations.
 	if(step == currentStep || step < 0 || !sprite || !sprite->Frames())
 		return;
 	currentStep = step;
-	
+
 	// If the sprite only has one frame, no need to animate anything.
 	float frames = sprite->Frames();
 	if(frames <= 1.f)
@@ -324,7 +402,7 @@ void Body::SetStep(int step) const
 	// This is the number of frames per full cycle. If rewinding, a full cycle
 	// includes the first and last frames once and every other frame twice.
 	float cycle = (rewind ? 2.f * lastFrame : frames) + delay;
-	
+
 	// If this is the very first step, fill in some values that we could not set
 	// until we knew the sprite's frame count and the starting step.
 	if(randomize)
@@ -339,14 +417,14 @@ void Body::SetStep(int step) const
 		// Adjust frameOffset so that this step's frame is exactly 0 (no fade).
 		frameOffset -= frameRate * step;
 	}
-	
+
 	// Figure out what fraction of the way in between frames we are. Avoid any
 	// possible floating-point glitches that might result in a negative frame.
 	frame = max(0.f, frameRate * step + frameOffset);
 	// If repeating, wrap the frame index by the total cycle time.
 	if(repeat)
 		frame = fmod(frame, cycle);
-	
+
 	if(!rewind)
 	{
 		// If not repeating, frame should never go higher than the index of the
